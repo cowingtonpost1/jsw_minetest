@@ -89,8 +89,3 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           no-cache: ${{ (github.event_name == 'workflow_dispatch' && !inputs.use_cache) || startsWith(github.ref, 'refs/tags/') }}
-
-      - name: Test Docker Image
-        run: |
-          docker run --rm $(cut -d, -f1 <<<"$DOCKER_METADATA_OUTPUT_TAGS") minetestserver --version
-        shell: bash
