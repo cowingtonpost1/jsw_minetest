@@ -182,6 +182,7 @@ void set_default_settings()
 	settings->setDefault("keymap_toggle_profiler", "KEY_F6");
 	settings->setDefault("keymap_camera_mode", "KEY_KEY_C");
 	settings->setDefault("keymap_screenshot", "KEY_F12");
+	settings->setDefault("keymap_fullscreen", "KEY_F11");
 	settings->setDefault("keymap_increase_viewing_range_min", "+");
 	settings->setDefault("keymap_decrease_viewing_range_min", "-");
 	settings->setDefault("keymap_slot1", "KEY_KEY_1");
@@ -535,11 +536,11 @@ void set_default_settings()
 	settings->setDefault("server_description", "");
 
 	settings->setDefault("enable_console", "false");
-	settings->setDefault("screen_dpi", "72");
 	settings->setDefault("display_density_factor", "1");
+	settings->setDefault("dpi_change_notifier", "0");
 
-	// Altered settings for macOS
-#if defined(__MACH__) && defined(__APPLE__)
+	// Altered settings for CIrrDeviceOSX
+#if !USE_SDL2 && defined(__MACH__) && defined(__APPLE__)
 	settings->setDefault("keymap_sneak", "KEY_SHIFT");
 #endif
 

@@ -1164,7 +1164,8 @@ void Game::run()
 			g_settings->getU16("screen_w"),
 			g_settings->getU16("screen_h")
 		);
-	const bool initial_window_maximized = g_settings->getBool("window_maximized");
+	const bool initial_window_maximized = !g_settings->getBool("fullscreen") &&
+			g_settings->getBool("window_maximized");
 
 	while (m_rendering_engine->run()
 			&& !(*kill || g_gamecallback->shutdown_requested
@@ -1913,6 +1914,10 @@ void Game::updateDebugState()
 	if (!has_debug) {
 		draw_control->show_wireframe = false;
 		m_flags.disable_camera_update = false;
+		auto formspec = m_game_ui->getFormspecGUI();
+		if (formspec) {
+			formspec->setDebugView(false);
+		}
 	}
 
 	// noclip
@@ -2425,9 +2430,6 @@ void Game::toggleBlockBounds()
 			break;
 		case Hud::BLOCK_BOUNDS_NEAR:
 			m_game_ui->showTranslatedStatusText("Block bounds shown for nearby blocks");
-			break;
-		case Hud::BLOCK_BOUNDS_MAX:
-			m_game_ui->showTranslatedStatusText("Block bounds shown for all blocks");
 			break;
 		default:
 			break;

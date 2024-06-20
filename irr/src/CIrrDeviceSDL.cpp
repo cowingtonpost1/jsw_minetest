@@ -272,6 +272,24 @@ CIrrDeviceSDL::CIrrDeviceSDL(const SIrrlichtCreationParameters &param) :
 		SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "0");
 #endif
 
+		// Minetest has its own signal handler
+		SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+
+		// Disabling the compositor is not a good idea in windowed mode.
+		// See https://github.com/minetest/minetest/issues/14596
+		SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
+
+#if defined(_IRR_COMPILE_WITH_JOYSTICK_EVENTS_)
+		// These are not interesting for our use
+		SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, "0");
+		SDL_SetHint(SDL_HINT_TV_REMOTE_AS_JOYSTICK, "0");
+#endif
+
+#if SDL_VERSION_ATLEAST(2, 24, 0)
+		// highdpi support on Windows
+		SDL_SetHint(SDL_HINT_WINDOWS_DPI_SCALING, "1");
+#endif
+
 		// Minetest has its own code to synthesize mouse events from touch events,
 		// so we prevent SDL from doing it.
 		SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
@@ -462,14 +480,9 @@ bool CIrrDeviceSDL::createWindow()
 bool CIrrDeviceSDL::createWindowWithContext()
 {
 	u32 SDL_Flags = 0;
+	SDL_Flags |= SDL_WINDOW_ALLOW_HIGHDPI;
 
-	if (CreationParams.Fullscreen) {
-#ifdef _IRR_EMSCRIPTEN_PLATFORM_
-		SDL_Flags |= SDL_WINDOW_FULLSCREEN;
-#else
-		SDL_Flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-#endif
-	}
+	SDL_Flags |= getFullscreenFlag(CreationParams.Fullscreen);
 	if (Resizable)
 		SDL_Flags |= SDL_WINDOW_RESIZABLE;
 	if (CreationParams.WindowMaximized)
@@ -582,13 +595,16 @@ bool CIrrDeviceSDL::createWindowWithContext()
 		return false;
 	}
 
-	// Update Width and Height to match the actual window size.
-	// In fullscreen mode, the window size specified in SIrrlichtCreationParameters
-	// is ignored, so we cannot rely on it.
-	int w = 0, h = 0;
-	SDL_GetWindowSize(Window, &w, &h);
-	Width = w;
-	Height = h;
+	updateSizeAndScale();
+	if (ScaleX != 1.0f || ScaleY != 1.0f) {
+		// The given window size is in pixels, not in screen coordinates.
+		// We can only do the conversion now since we didn't know the scale before.
+		SDL_SetWindowSize(Window, CreationParams.WindowSize.Width / ScaleX,
+				CreationParams.WindowSize.Height / ScaleY);
+		// Re-center, otherwise large, non-maximized windows go offscreen.
+		SDL_SetWindowPosition(Window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+		updateSizeAndScale();
+	}
 
 	return true;
 #endif // !_IRR_EMSCRIPTEN_PLATFORM_
@@ -652,10 +668,10 @@ bool CIrrDeviceSDL::run()
 
 			irrevent.EventType = irr::EET_MOUSE_INPUT_EVENT;
 			irrevent.MouseInput.Event = irr::EMIE_MOUSE_MOVED;
-			MouseX = irrevent.MouseInput.X = SDL_event.motion.x;
-			MouseY = irrevent.MouseInput.Y = SDL_event.motion.y;
-			MouseXRel = SDL_event.motion.xrel;
-			MouseYRel = SDL_event.motion.yrel;
+			MouseX = irrevent.MouseInput.X = SDL_event.motion.x * ScaleX;
+			MouseY = irrevent.MouseInput.Y = SDL_event.motion.y * ScaleY;
+			MouseXRel = SDL_event.motion.xrel * ScaleX;
+			MouseYRel = SDL_event.motion.yrel * ScaleY;
 			irrevent.MouseInput.ButtonStates = MouseButtonStates;
 			irrevent.MouseInput.Shift = (keymod & KMOD_SHIFT) != 0;
 			irrevent.MouseInput.Control = (keymod & KMOD_CTRL) != 0;
@@ -673,6 +689,7 @@ bool CIrrDeviceSDL::run()
 #else
 			irrevent.MouseInput.Wheel = SDL_event.wheel.y;
 #endif
+			irrevent.MouseInput.ButtonStates = MouseButtonStates;
 			irrevent.MouseInput.Shift = (keymod & KMOD_SHIFT) != 0;
 			irrevent.MouseInput.Control = (keymod & KMOD_CTRL) != 0;
 			irrevent.MouseInput.X = MouseX;
@@ -686,8 +703,8 @@ bool CIrrDeviceSDL::run()
 			SDL_Keymod keymod = SDL_GetModState();
 
 			irrevent.EventType = irr::EET_MOUSE_INPUT_EVENT;
-			irrevent.MouseInput.X = SDL_event.button.x;
-			irrevent.MouseInput.Y = SDL_event.button.y;
+			irrevent.MouseInput.X = SDL_event.button.x * ScaleX;
+			irrevent.MouseInput.Y = SDL_event.button.y * ScaleY;
 			irrevent.MouseInput.Shift = (keymod & KMOD_SHIFT) != 0;
 			irrevent.MouseInput.Control = (keymod & KMOD_CTRL) != 0;
 
@@ -819,14 +836,25 @@ bool CIrrDeviceSDL::run()
 		case SDL_WINDOWEVENT:
 			switch (SDL_event.window.event) {
 			case SDL_WINDOWEVENT_RESIZED:
-				if ((SDL_event.window.data1 != (int)Width) || (SDL_event.window.data2 != (int)Height)) {
-					Width = SDL_event.window.data1;
-					Height = SDL_event.window.data2;
+			case SDL_WINDOWEVENT_SIZE_CHANGED:
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+			case SDL_WINDOWEVENT_DISPLAY_CHANGED:
+#endif
+				u32 old_w = Width, old_h = Height;
+				f32 old_scale_x = ScaleX, old_scale_y = ScaleY;
+				updateSizeAndScale();
+				if (old_w != Width || old_h != Height) {
 					if (VideoDriver)
 						VideoDriver->OnResize(core::dimension2d<u32>(Width, Height));
 				}
+				if (old_scale_x != ScaleX || old_scale_y != ScaleY) {
+					irrevent.EventType = EET_APPLICATION_EVENT;
+					irrevent.ApplicationEvent.EventType = EAET_DPI_CHANGED;
+					postEventFromUser(irrevent);
+				}
 				break;
 			}
+			break;
 
 		case SDL_USEREVENT:
 			irrevent.EventType = irr::EET_USER_EVENT;
@@ -887,6 +915,14 @@ bool CIrrDeviceSDL::run()
 
 		case SDL_APP_WILLENTERFOREGROUND:
 			IsInBackground = false;
+			break;
+
+		case SDL_RENDER_TARGETS_RESET:
+			os::Printer::log("Received SDL_RENDER_TARGETS_RESET. Rendering is probably broken.", ELL_ERROR);
+			break;
+
+		case SDL_RENDER_DEVICE_RESET:
+			os::Printer::log("Received SDL_RENDER_DEVICE_RESET. Rendering is probably broken.", ELL_ERROR);
 			break;
 
 		default:
@@ -1014,25 +1050,26 @@ bool CIrrDeviceSDL::activateJoysticks(core::array<SJoystickInfo> &joystickInfo)
 	return false;
 }
 
+void CIrrDeviceSDL::updateSizeAndScale()
+{
+	int window_w, window_h;
+	SDL_GetWindowSize(Window, &window_w, &window_h);
+
+	int drawable_w, drawable_h;
+	SDL_GL_GetDrawableSize(Window, &drawable_w, &drawable_h);
+
+	ScaleX = (float)drawable_w / (float)window_w;
+	ScaleY = (float)drawable_h / (float)window_h;
+
+	Width = drawable_w;
+	Height = drawable_h;
+}
+
 //! Get the display density in dots per inch.
 float CIrrDeviceSDL::getDisplayDensity() const
 {
-	if (!Window)
-		return 0.0f;
-
-	int window_w;
-	int window_h;
-	SDL_GetWindowSize(Window, &window_w, &window_h);
-
-	int drawable_w;
-	int drawable_h;
-	SDL_GL_GetDrawableSize(Window, &drawable_w, &drawable_h);
-
 	// assume 96 dpi
-	float dpi_w = (float)drawable_w / (float)window_w * 96.0f;
-	float dpi_h = (float)drawable_h / (float)window_h * 96.0f;
-
-	return std::max(dpi_w, dpi_h);
+	return std::max(ScaleX * 96.0f, ScaleY * 96.0f);
 }
 
 void CIrrDeviceSDL::SwapWindow()
@@ -1157,12 +1194,35 @@ bool CIrrDeviceSDL::isWindowMaximized() const
 
 bool CIrrDeviceSDL::isFullscreen() const
 {
-#ifdef _IRR_EMSCRIPTEN_PLATFORM_
-	return SDL_GetWindowFlags(0) == SDL_WINDOW_FULLSCREEN;
-#else
+	if (!Window)
+		return false;
+	u32 flags = SDL_GetWindowFlags(Window);
+	return (flags & SDL_WINDOW_FULLSCREEN) != 0 ||
+			(flags & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
+}
 
-	return CIrrDeviceStub::isFullscreen();
+u32 CIrrDeviceSDL::getFullscreenFlag(bool fullscreen)
+{
+	if (!fullscreen)
+		return 0;
+#ifdef _IRR_EMSCRIPTEN_PLATFORM_
+	return SDL_WINDOW_FULLSCREEN;
+#else
+	return SDL_WINDOW_FULLSCREEN_DESKTOP;
 #endif
+}
+
+bool CIrrDeviceSDL::setFullscreen(bool fullscreen)
+{
+	if (!Window)
+		return false;
+	// The SDL wiki says that this may trigger SDL_RENDER_TARGETS_RESET, but
+	// looking at the SDL source, this only happens with D3D, so it's not
+	// relevant to us.
+	bool success = SDL_SetWindowFullscreen(Window, getFullscreenFlag(fullscreen)) == 0;
+	if (!success)
+		os::Printer::log("SDL_SetWindowFullscreen failed", SDL_GetError(), ELL_ERROR);
+	return success;
 }
 
 bool CIrrDeviceSDL::isWindowVisible() const
@@ -1228,7 +1288,8 @@ void CIrrDeviceSDL::createKeyMap()
 
 	// buttons missing
 
-	KeyMap.push_back(SKeyMap(SDLK_AC_BACK, KEY_CANCEL));
+	// Android back button = ESC
+	KeyMap.push_back(SKeyMap(SDLK_AC_BACK, KEY_ESCAPE));
 
 	KeyMap.push_back(SKeyMap(SDLK_BACKSPACE, KEY_BACK));
 	KeyMap.push_back(SKeyMap(SDLK_TAB, KEY_TAB));

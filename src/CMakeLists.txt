@@ -351,6 +351,12 @@ endif()
 include(CheckSymbolExists)
 check_symbol_exists(strlcpy "string.h" HAVE_STRLCPY)
 
+if(UNIX)
+	check_symbol_exists(malloc_trim "malloc.h" HAVE_MALLOC_TRIM)
+else()
+	set(HAVE_MALLOC_TRIM FALSE)
+endif()
+
 check_include_files(endian.h HAVE_ENDIAN_H)
 
 configure_file(
@@ -466,6 +472,10 @@ endif()
 
 if(BUILD_BENCHMARKS)
 	set(common_SRCS ${common_SRCS} ${BENCHMARK_SRCS})
+endif()
+
+if(BUILD_UNITTESTS OR BUILD_BENCHMARKS)
+	set(common_SRCS ${common_SRCS} catch.cpp)
 endif()
 
 # This gives us the icon and file version information
