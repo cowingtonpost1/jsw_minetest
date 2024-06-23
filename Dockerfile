@@ -66,9 +66,7 @@ ARG DOCKER_IMAGE=alpine:3.16
 FROM $DOCKER_IMAGE AS runtime
 
 RUN apk add --no-cache curl gmp libstdc++ libgcc libpq jsoncpp zstd-libs \
-				sqlite-libs postgresql hiredis leveldb && \
-	adduser -D minetest --uid 30000 -h /var/lib/minetest && \
-	chown -R minetest:minetest /var/lib/minetest
+				sqlite-libs postgresql hiredis leveldb bash
 
 WORKDIR /var/lib/minetest
 
@@ -77,10 +75,10 @@ COPY --from=builder /usr/local/bin/minetestserver /usr/local/bin/minetestserver
 COPY --from=builder /usr/local/share/doc/minetest/minetest.conf.example /etc/minetest/minetest.conf
 COPY --from=builder /usr/local/lib/libspatialindex* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libluajit* /usr/local/lib/
-USER minetest:minetest
 
-EXPOSE 30000/udp 30000/tcp
-VOLUME /var/lib/minetest/ /etc/minetest/
+USER        container
+ENV         USER=container HOME=/home/container
+WORKDIR     /home/container
 
-ENTRYPOINT ["/usr/local/bin/minetestserver"]
-CMD ["--config", "/etc/minetest/minetest.conf"]
+COPY        ./entrypoint.sh /entrypoint.sh
+CMD         [ "/bin/bash", "/entrypoint.sh" ]
