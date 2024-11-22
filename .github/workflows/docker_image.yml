@@ -7,7 +7,7 @@ name: docker_image
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "mt5.10.0" ]
     # Publish semver tags as releases.
     tags: [ "*" ]
   pull_request:
