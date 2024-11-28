@@ -76,9 +76,9 @@ jobs:
             org.opencontainers.image.vendor=Luanti
             org.opencontainers.image.licenses=LGPL-2.1-only
 
-      # Build and push Docker image
-      # https://github.com/docker/build-push-action
-      # No arm support for now. Require cross-compilation support in Dockerfile to not use QEMU.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5.1.0
         with:
