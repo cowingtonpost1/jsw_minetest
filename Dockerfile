@@ -5,7 +5,7 @@ ENV LUAJIT_VERSION v2.1
 
 RUN apk add --no-cache git build-base cmake curl-dev zlib-dev zstd-dev \
 		sqlite-dev postgresql-dev hiredis-dev leveldb-dev \
-		gmp-dev jsoncpp-dev ninja ca-certificates
+		gmp-dev jsoncpp-dev ninja ca-certificates ncurses-dev
 
 WORKDIR /usr/src/
 RUN git clone --recursive https://github.com/jupp0r/prometheus-cpp && \
@@ -55,6 +55,7 @@ RUN cmake -B build \
 		-DENABLE_PROMETHEUS=TRUE \
 		-DBUILD_UNITTESTS=FALSE -DBUILD_BENCHMARKS=FALSE \
 		-DBUILD_CLIENT=FALSE \
+		-DENABLE_CURSES=ON \
 		-GNinja && \
 	cmake --build build && \
 	cmake --install build
@@ -62,7 +63,7 @@ RUN cmake -B build \
 FROM $DOCKER_IMAGE AS runtime
 
 RUN apk add --no-cache curl gmp libstdc++ libgcc libpq jsoncpp zstd-libs \
-				sqlite-libs postgresql hiredis leveldb bash
+				sqlite-libs postgresql hiredis leveldb bash ncurses
 
 WORKDIR /var/lib/minetest
 
