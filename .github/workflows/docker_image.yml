@@ -76,14 +76,11 @@ jobs:
             org.opencontainers.image.vendor=Luanti
             org.opencontainers.image.licenses=LGPL-2.1-only
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Build and push Docker image
         uses: docker/build-push-action@v5.1.0
         with:
           context: .
-          platforms: linux/amd64, linux/arm64/v8
+          platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           load: false
           tags: ${{ steps.meta.outputs.tags }}
