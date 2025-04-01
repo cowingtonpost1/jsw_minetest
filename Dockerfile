@@ -1,4 +1,4 @@
-ARG DOCKER_IMAGE=alpine:3.20
+ARG DOCKER_IMAGE=alpine:3.21
 FROM $DOCKER_IMAGE AS dev
 
 ENV LUAJIT_VERSION v2.1
@@ -63,7 +63,7 @@ RUN cmake -B build \
 FROM $DOCKER_IMAGE AS runtime
 
 RUN apk add --no-cache curl gmp libstdc++ libgcc libpq jsoncpp zstd-libs \
-				sqlite-libs postgresql hiredis leveldb bash ncurses
+				sqlite-libs postgresql hiredis leveldb bash ncurses git
 
 WORKDIR /var/lib/minetest
 
