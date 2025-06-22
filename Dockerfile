@@ -63,7 +63,7 @@ RUN cmake -B build \
 FROM $DOCKER_IMAGE AS runtime
 
 RUN apk add --no-cache curl gmp libstdc++ libgcc libpq jsoncpp zstd-libs \
-				sqlite-libs postgresql hiredis leveldb bash ncurses git
+				sqlite-libs postgresql hiredis leveldb bash ncurses git vim nano
 
 WORKDIR /var/lib/minetest
 
