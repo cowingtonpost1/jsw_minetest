@@ -21,3 +21,18 @@ echo -e ":/home/container$ ${MODIFIED_STARTUP}"
 
 # Run the Server
 eval ${MODIFIED_STARTUP}
+
+if [ -n "$WEBHOOK_URL" ]; then
+    log_file=$(ls -t /home/container/.minetest/logs 2>/dev/null | head -n1)
+
+    out=$(tail -n20 "$log_file")
+
+    errors=$(echo "$out" | grep -i ERROR > /dev/null)
+
+    if [ $? -eq 0 ]; then
+        echo "$errors" | jq -Rs \
+            --arg prefix 'Server Crashed: ```' --arg suffix '```' '{content: ($prefix + . + $suffix)}' \
+            | curl -X POST -H "Content-Type: application/json" -d @- "$WEBHOOK_URL"
+    fi
+fi
+
