@@ -25,7 +25,11 @@ eval ${MODIFIED_STARTUP}
 if [ -n "$WEBHOOK_URL" ]; then
     log_file=$(ls -t /home/container/.minetest/logs 2>/dev/null | head -n1)
 
-    out=$(tail -n20 "$log_file")
+    if [ -z "$log_file" ]; then 
+        log_file="../server.log"
+    fi
+
+    out=$(tail -n20 /home/container/.minetest/logs/"$log_file")
 
     errors=$(echo "$out" | grep -i ERROR > /dev/null)
 
