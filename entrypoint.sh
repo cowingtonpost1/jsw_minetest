@@ -31,7 +31,7 @@ if [ -n "$WEBHOOK_URL" ]; then
 
     out=$(tail -n20 /home/container/.minetest/logs/"$log_file")
 
-    errors=$(echo "$out" | grep -i ERROR > /dev/null)
+    errors=$(echo "$out" | grep -i ERROR 2>&1)
 
     if [ $? -eq 0 ]; then
         echo "$errors" | jq -Rs \
