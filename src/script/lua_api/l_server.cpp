@@ -260,7 +260,7 @@ int ModApiServer::l_get_player_information(lua_State *L)
 	lua_settable(L, table);
 
 	lua_pushstring(L,"state");
-	lua_pushstring(L, ClientInterface::state2Name(info.state).c_str());
+	lua_pushstring(L, ClientInterface::state2Name(info.state));
 	lua_settable(L, table);
 
 	return 1;
