@@ -43,14 +43,8 @@ typedef float f32;
 /** This is a typedef for double, it ensures portability of the engine. */
 typedef double f64;
 
-//! Defines for snprintf_irr because snprintf method does not match the ISO C
-//! standard on Windows platforms.
-//! We want int snprintf_irr(char *str, size_t size, const char *format, ...);
-#if defined(_MSC_VER)
-#define snprintf_irr sprintf_s
-#else
+//! Note: cannot assume that positional arguments are supported (not on Windows)
 #define snprintf_irr snprintf
-#endif // _MSC_VER
 
 //! Type name for character type used by the file system (legacy).
 typedef char fschar_t;
@@ -70,6 +64,12 @@ typedef char fschar_t;
 #endif
 #ifndef IRR_CODE_UNREACHABLE
 #define IRR_CODE_UNREACHABLE() (void)0
+#endif
+
+#ifdef NDEBUG
+#define IRR_DOWN_CAST static_cast
+#else
+#define IRR_DOWN_CAST dynamic_cast
 #endif
 
 //! creates four CC codes used in Irrlicht for simple ids

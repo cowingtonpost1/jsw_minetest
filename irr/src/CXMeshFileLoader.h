@@ -5,7 +5,9 @@
 #pragma once
 
 #include "IMeshLoader.h"
+#include "irrArray.h"
 #include "irrString.h"
+#include "S3DVertex.h"
 #include "SkinnedMesh.h"
 
 namespace io
@@ -14,7 +16,6 @@ class IReadFile;
 } // end namespace io
 namespace scene
 {
-class IMeshManipulator;
 
 //! Meshloader capable of loading x meshes.
 class CXMeshFileLoader : public IMeshLoader
@@ -64,8 +65,12 @@ public:
 
 		core::array<video::SMaterial> Materials; // material array
 
-		core::array<u32> WeightJoint;
-		core::array<u32> WeightNum;
+		struct Weight {
+			u16 joint_id;
+			u32 global_vertex_id;
+			f32 strength;
+		};
+		std::vector<Weight> Weights;
 
 		s32 AttachedJointID;
 
@@ -153,7 +158,7 @@ private:
 	bool readRGB(video::SColor &color);
 	bool readRGBA(video::SColor &color);
 
-	SkinnedMeshBuilder *AnimatedMesh;
+	SkinnedMeshBuilder AnimatedMesh;
 
 	c8 *Buffer;
 	const c8 *P;

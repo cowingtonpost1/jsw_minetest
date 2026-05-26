@@ -12,7 +12,6 @@
 #define MGFLAT_HILLS 0x02
 #define MGFLAT_CAVERNS 0x04
 
-class BiomeManager;
 
 extern const FlagDesc flagdesc_mapgen_flat[];
 
@@ -71,5 +70,5 @@ private:
 	float hill_threshold;
 	float hill_steepness;
 
-	Noise *noise_terrain;
+	Noise *noise_terrain = nullptr;
 };

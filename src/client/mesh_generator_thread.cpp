@@ -7,6 +7,7 @@
 #include "profiler.h"
 #include "client.h"
 #include "mapblock.h"
+#include "mapblock_mesh.h"
 #include "map.h"
 #include "util/directiontables.h"
 #include "porting.h"
@@ -29,6 +30,8 @@ void QueuedMeshUpdate::retrieveBlocks(Map *map, u16 cell_size)
 		assert(map_blocks.size() == total); // must not change
 	size_t i = 0;
 	v3s16 pos;
+	// order is not important, but it must be consistent
+	// note the extra margin!
 	for (pos.X = p.X - 1; pos.X <= p.X + cell_size; pos.X++)
 	for (pos.Z = p.Z - 1; pos.Z <= p.Z + cell_size; pos.Z++)
 	for (pos.Y = p.Y - 1; pos.Y <= p.Y + cell_size; pos.Y++) {
@@ -43,6 +46,20 @@ void QueuedMeshUpdate::retrieveBlocks(Map *map, u16 cell_size)
 	}
 }
 
+bool QueuedMeshUpdate::checkSkip(u16 cell_size)
+{
+	bool all_air = true;
+	const v3s16 p_max = p + v3s16(cell_size);
+	assert(!map_blocks.empty());
+	for (auto *block : map_blocks) {
+		// ignore extra margin
+		if (block && block->getPos() >= p && block->getPos() < p_max) {
+			all_air &= block->isAir();
+		}
+	}
+	return all_air;
+}
+
 void QueuedMeshUpdate::dropBlocks()
 {
 	for (auto *block : map_blocks) {
@@ -50,6 +67,19 @@ void QueuedMeshUpdate::dropBlocks()
 			block->refDrop();
 	}
 	map_blocks.clear();
+}
+
+namespace {
+	struct DroppingDeleter {
+		void operator() (QueuedMeshUpdate *q) {
+			if (q)
+				q->dropBlocks();
+			delete q;
+		}
+	};
+
+	// Simple helper to avoid messing up the refcounting
+	using UnqueuedMeshUpdate = std::unique_ptr<QueuedMeshUpdate, DroppingDeleter>;
 }
 
 /*
@@ -65,28 +95,21 @@ MeshUpdateQueue::MeshUpdateQueue(Client *client):
 
 MeshUpdateQueue::~MeshUpdateQueue()
 {
-	MutexAutoLock lock(m_mutex);
-
-	for (QueuedMeshUpdate *q : m_queue) {
-		q->dropBlocks();
-		delete q;
-	}
+	clear(true);
 }
 
 bool MeshUpdateQueue::addBlock(Map *map, v3s16 p, bool ack_block_to_server,
 	bool urgent, bool from_neighbor)
 {
-	// FIXME: with cell_size > 1 there isn't a "main block" and this check is
-	// probably incorrect and broken
-	MapBlock *main_block = map->getBlockNoCreateNoEx(p);
-	if (!main_block)
+	// If block that causes update does not exist, skip.
+	if (!map->getBlockNoCreateNoEx(p))
 		return false;
 
-	MeshGrid mesh_grid = m_client->getMeshGrid();
+	const MeshGrid mesh_grid = m_client->getMeshGrid();
 
 	// Mesh is placed at the corner block of a chunk
 	// (where all coordinate are divisible by the chunk size)
-	v3s16 mesh_position = mesh_grid.getMeshPos(p);
+	const v3s16 mesh_position = mesh_grid.getMeshPos(p);
 
 	MutexAutoLock lock(m_mutex);
 
@@ -113,21 +136,9 @@ bool MeshUpdateQueue::addBlock(Map *map, v3s16 p, bool ack_block_to_server,
 	}
 
 	/*
-		Air blocks won't suddenly become visible due to a neighbor update, so
-		skip those.
-		Note: this can be extended with more precise checks in the future
+		Grab the relevant blocks first
 	*/
-	if (from_neighbor && mesh_grid.cell_size == 1 && main_block->isAir()) {
-		assert(!ack_block_to_server);
-		m_urgents.erase(mesh_position);
-		g_profiler->add("MeshUpdateQueue: updates skipped", 1);
-		return true;
-	}
-
-	/*
-		Add the block
-	*/
-	QueuedMeshUpdate *q = new QueuedMeshUpdate;
+	UnqueuedMeshUpdate q{new QueuedMeshUpdate()};
 	q->p = mesh_position;
 	if (ack_block_to_server)
 		q->ack_list.push_back(p);
@@ -135,7 +146,21 @@ bool MeshUpdateQueue::addBlock(Map *map, v3s16 p, bool ack_block_to_server,
 	q->crack_pos = m_client->getCrackPos();
 	q->urgent = urgent;
 	q->retrieveBlocks(map, mesh_grid.cell_size);
-	m_queue.push_back(q);
+
+	/*
+		Air blocks won't suddenly become visible due to a neighbor update, so
+		skip those.
+		Note: this can be extended with more precise checks in the future
+	*/
+	if (from_neighbor && q->checkSkip(mesh_grid.cell_size)) {
+		assert(!ack_block_to_server);
+		m_urgents.erase(mesh_position);
+		g_profiler->add("MeshUpdateQueue: updates skipped", 1);
+		return true;
+	}
+
+	// Put into queue, pointer moved from `q`.
+	m_queue.push_back(q.release());
 
 	return true;
 }
@@ -144,7 +169,7 @@ bool MeshUpdateQueue::addBlock(Map *map, v3s16 p, bool ack_block_to_server,
 // Returns NULL if queue is empty
 QueuedMeshUpdate *MeshUpdateQueue::pop()
 {
-	QueuedMeshUpdate *result = NULL;
+	QueuedMeshUpdate *result = nullptr;
 	{
 		MutexAutoLock lock(m_mutex);
 
@@ -176,6 +201,24 @@ void MeshUpdateQueue::done(v3s16 pos)
 	m_inflight_blocks.erase(pos);
 }
 
+void MeshUpdateQueue::clear(bool finish)
+{
+	MutexAutoLock lock(m_mutex);
+	decltype(m_queue) new_queue;
+	for (auto *it : m_queue) {
+		// If we're in an active game session clearing updates that the
+		// server expects us to ack will cause problems.
+		if (it->ack_list.empty() || finish) {
+			m_urgents.erase(it->p);
+			m_inflight_blocks.erase(it->p);
+			it->dropBlocks();
+			delete it;
+		} else {
+			new_queue.push_back(it);
+		}
+	}
+	m_queue = std::move(new_queue);
+}
 
 void MeshUpdateQueue::fillDataFromMapBlocks(QueuedMeshUpdate *q)
 {
@@ -186,12 +229,8 @@ void MeshUpdateQueue::fillDataFromMapBlocks(QueuedMeshUpdate *q)
 
 	data->fillBlockDataBegin(q->p);
 
-	v3s16 pos;
-	int i = 0;
-	for (pos.X = q->p.X - 1; pos.X <= q->p.X + mesh_grid.cell_size; pos.X++)
-	for (pos.Z = q->p.Z - 1; pos.Z <= q->p.Z + mesh_grid.cell_size; pos.Z++)
-	for (pos.Y = q->p.Y - 1; pos.Y <= q->p.Y + mesh_grid.cell_size; pos.Y++) {
-		MapBlock *block = q->map_blocks[i++];
+	// NOTE: the "data race" mentioned by MapBlock::tryShrinkNodes() is right here
+	for (auto *block : q->map_blocks) {
 		if (block)
 			block->copyTo(data->m_vmanip);
 	}
@@ -224,13 +263,13 @@ void MeshUpdateWorkerThread::doUpdate()
 
 		MeshUpdateResult r;
 		r.p = q->p;
-		r.mesh = mesh_new;
+		r.mesh = std::unique_ptr<MapBlockMesh>(mesh_new);
 		r.solid_sides = get_solid_sides(q->data);
 		r.ack_list = std::move(q->ack_list);
 		r.urgent = q->urgent;
 		r.map_blocks = std::move(q->map_blocks);
 
-		m_manager->putResult(r);
+		m_manager->putResult(std::move(r));
 		m_queue_in->done(q->p);
 		delete q;
 		sp.stop();
@@ -288,12 +327,12 @@ void MeshUpdateManager::updateBlock(Map *map, v3s16 p, bool ack_block_to_server,
 	deferUpdate();
 }
 
-void MeshUpdateManager::putResult(const MeshUpdateResult &result)
+void MeshUpdateManager::putResult(MeshUpdateResult &&result)
 {
 	if (result.urgent)
-		m_queue_out_urgent.push_back(result);
+		m_queue_out_urgent.push_back(std::move(result));
 	else
-		m_queue_out.push_back(result);
+		m_queue_out.push_back(std::move(result));
 }
 
 bool MeshUpdateManager::getNextResult(MeshUpdateResult &r)
@@ -309,6 +348,32 @@ bool MeshUpdateManager::getNextResult(MeshUpdateResult &r)
 	}
 
 	return false;
+}
+
+void MeshUpdateManager::clearAllQueues(bool finish)
+{
+	m_queue_in.clear(finish);
+
+	const auto &drop_result = [] (MeshUpdateResult &r) {
+		for (auto *block : r.map_blocks)
+			if (block)
+				block->refDrop();
+	};
+	// Same problem as in MeshUpdateQueue::clear() here: we can't just blindly
+	// throw away results that the server expects to receive an ack for.
+	const auto &do_it = [&finish, &drop_result] (ResultQueue &queue) {
+		auto helper = queue.iterLocked();
+		for (auto it = helper.begin(); it != helper.end(); ) {
+			if (it->ack_list.empty() || finish) {
+				drop_result(*it);
+				it = helper.erase(it);
+			} else {
+				++it;
+			}
+		}
+	};
+	do_it(m_queue_out_urgent);
+	do_it(m_queue_out);
 }
 
 void MeshUpdateManager::deferUpdate()

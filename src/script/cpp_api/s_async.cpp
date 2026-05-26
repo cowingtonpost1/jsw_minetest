@@ -16,6 +16,7 @@ extern "C" {
 #include "log.h"
 #include "config.h"
 #include "filesys.h"
+#include "settings.h"
 #include "porting.h"
 #include "common/c_internal.h"
 #include "common/c_packer.h"
@@ -96,38 +97,44 @@ void AsyncEngine::addWorkerThread()
 }
 
 /******************************************************************************/
-u32 AsyncEngine::queueAsyncJob(std::string &&func, std::string &&params,
-		const std::string &mod_origin)
+
+u32 AsyncEngine::queueAsyncJob(LuaJobInfo &&job)
 {
 	MutexAutoLock autolock(jobQueueMutex);
 	u32 jobId = jobIdCounter++;
 
-	jobQueue.emplace_back();
-	auto &to_add = jobQueue.back();
-	to_add.id = jobId;
-	to_add.function = std::move(func);
-	to_add.params = std::move(params);
-	to_add.mod_origin = mod_origin;
+	assert(!job.function.empty());
+	job.id = jobId;
+	jobQueue.push_back(std::move(job));
 
 	jobQueueCounter.post();
 	return jobId;
 }
 
+u32 AsyncEngine::queueAsyncJob(std::string &&func, std::string &&params,
+		const std::string &mod_origin)
+{
+	LuaJobInfo to_add(std::move(func), std::move(params), mod_origin);
+	return queueAsyncJob(std::move(to_add));
+}
+
 u32 AsyncEngine::queueAsyncJob(std::string &&func, PackedValue *params,
 		const std::string &mod_origin)
 {
+	LuaJobInfo to_add(std::move(func), params, mod_origin);
+	return queueAsyncJob(std::move(to_add));
+}
+
+bool AsyncEngine::cancelAsyncJob(u32 id)
+{
 	MutexAutoLock autolock(jobQueueMutex);
-	u32 jobId = jobIdCounter++;
-
-	jobQueue.emplace_back();
-	auto &to_add = jobQueue.back();
-	to_add.id = jobId;
-	to_add.function = std::move(func);
-	to_add.params_ext.reset(params);
-	to_add.mod_origin = mod_origin;
-
-	jobQueueCounter.post();
-	return jobId;
+	for (auto job = jobQueue.begin(); job != jobQueue.end(); job++) {
+		if (job->id == id) {
+			jobQueue.erase(job);
+			return true;
+		}
+	}
+	return false;
 }
 
 /******************************************************************************/
@@ -254,8 +261,8 @@ void AsyncEngine::stepStuckWarning()
 /******************************************************************************/
 bool AsyncEngine::prepareEnvironment(lua_State* L, int top)
 {
-	for (StateInitializer &stateInitializer : stateInitializers) {
-		stateInitializer(L, top);
+	for (const auto &init : stateInitializers) {
+		init(L, top);
 	}
 
 	auto *script = ModApiBase::getScriptApiBase(L);
@@ -266,7 +273,11 @@ bool AsyncEngine::prepareEnvironment(lua_State* L, int top)
 	} catch (const ModError &e) {
 		errorstream << "Execution of async base environment failed: "
 			<< e.what() << std::endl;
-		FATAL_ERROR("Execution of async base environment failed");
+		if (server)
+			server->setAsyncFatalError(e.what());
+		// FIXME: there's no general way to report such fatal errors to our "owner"
+		// (e.g. GUIEngine)
+		return false;
 	}
 
 	// Load per mod stuff
@@ -419,3 +430,19 @@ void* AsyncWorkerThread::run()
 	return 0;
 }
 
+u32 ScriptApiAsync::queueAsync(std::string &&serialized_func,
+		PackedValue *param, const std::string &mod_origin)
+{
+	return asyncEngine.queueAsyncJob(std::move(serialized_func),
+			param, mod_origin);
+}
+
+bool ScriptApiAsync::cancelAsync(u32 id)
+{
+	return asyncEngine.cancelAsyncJob(id);
+}
+
+void ScriptApiAsync::stepAsync()
+{
+	asyncEngine.step(getStack());
+}
